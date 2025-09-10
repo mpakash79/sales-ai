@@ -10,7 +10,8 @@ from email.mime.multipart import MIMEMultipart
 from app import (
     get_filter_key_names_llm,
     search_query_with_tavily,
-    extract_company_info_with_llm
+    extract_company_info_with_llm,
+    get_user_filters
 )
 
 # Path to store seen companies
@@ -66,7 +67,7 @@ def poll_and_notify():
     seen_companies = load_seen_companies()
 
     # === User-defined filters ===
-    user_filters = ["funded $1M", "employee size 50"]  # Example filters
+    user_filters =  get_user_filters()  # Example filters
 
     # Use LLM to get meaningful keys and suggested query
     filter_key_values, suggested_query = get_filter_key_names_llm(user_filters)

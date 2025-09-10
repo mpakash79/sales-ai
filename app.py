@@ -11,6 +11,8 @@ import builtins
 
 load_dotenv('env')
 
+user_filters = []
+
 
 def _safe_chat_completion(client: InferenceClient, model: str, messages, retries: int = 1):
     """
@@ -160,15 +162,19 @@ def search_query_with_tavily(query: str):
 
     return {"answer": answer, "sources": sources}
 
+def get_user_filters():
+        print("Enter your filters one by one below. Type 'done' when finished.")
+        while True:
+            filter_input = input()
+            if filter_input.lower() == 'done':
+                break
+            user_filters.append(filter_input)
+        return user_filters
+
 if __name__ == "__main__":
 
-    user_filters = []
-    print("Enter your filters one by one below. Type 'done' when finished.")
-    while True:
-        filter_input = input()
-        if filter_input.lower() == 'done':
-            break
-        user_filters.append(filter_input)
+
+    get_user_filters()
 
     # Get meaningful key names for each filter using LLM
     filter_key_values, suggested_query = get_filter_key_names_llm(user_filters)
