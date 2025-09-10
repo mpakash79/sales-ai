@@ -1,12 +1,17 @@
-# --- add these imports near the top of your file ---
 import os
 import re
 import json
 import requests
+from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
-# we import the internal get_session used by huggingface_hub
 import huggingface_hub.inference._client as _hf_inference_client
-# ---------------------------------------------------
+from tavily import TavilyClient
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import time
+
+load_dotenv()
 
 def _safe_chat_completion(client: InferenceClient, model: str, messages, retries: int = 1):
     """
@@ -28,7 +33,6 @@ def _safe_chat_completion(client: InferenceClient, model: str, messages, retries
             raise
         # retry once
         return _safe_chat_completion(client, model, messages, retries=retries - 1)
-
 
 def get_filter_key_names_llm(user_filters):
     """
@@ -62,9 +66,6 @@ def get_filter_key_names_llm(user_filters):
         if match:
             return json.loads(match.group(0)), ""
         return [], ""
-
-
-
 
 def extract_company_info_with_llm(tavily_result):
     client = InferenceClient(
@@ -124,11 +125,6 @@ def extract_company_info_with_llm(tavily_result):
         result_json = [{k: "" for k in filter_keys}]
     return result_json
 
-
-import os
-from tavily import TavilyClient
-
-
 def search_query_with_tavily(query: str):
     """
     Perform a web search using Tavily and return the answer and sources.
@@ -157,6 +153,84 @@ def search_query_with_tavily(query: str):
 
     return {"answer": answer, "sources": sources}
 
+
+def clean_text(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    return soup.get_text(" ", strip=True)
+
+def fetch_page(url: str) -> str:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/139.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        return resp.text
+    except requests.exceptions.HTTPError as e:
+        if resp.status_code == 403:
+            print(f"[!] 403 blocked by {url}, retrying with Selenium...")
+            return fetch_with_selenium(url)
+        else:
+            raise
+
+def fetch_with_selenium(url: str) -> str:
+    options = Options()
+    options.add_argument("--headless=new")   # run in headless mode
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                         "AppleWebKit/537.36 (KHTML, like Gecko) "
+                         "Chrome/139.0.0.0 Safari/537.36")
+
+    driver = webdriver.Chrome(options=options)
+    driver.get(url)
+
+    # wait for JS to load
+    time.sleep(3)
+
+    html = driver.page_source
+    driver.quit()
+    return html
+
+
+
+def extract_json(text: str, keys: list[str]) -> dict:
+    client = InferenceClient(
+        provider="together",
+        api_key=os.environ["HF_TOKEN"],
+    )
+    prompt = (
+        f"Extract structured information about companies from the following text. "
+        f"The text may contain tables. Parse tables and extract company details matching these keys: {keys}. "
+        f"Return only a JSON array of objects, one per company, with keys: {keys}. Do not include any explanation, commentary, or extra text. Return only the JSON array.\n\n"
+        f"Text: {text[:4000]}"
+    )
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
+    response_text = completion.choices[0].message.content
+    # Try to extract JSON from response
+    try:
+        match = re.search(r'\{.*\}|\[.*\]', response_text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return response_text
+    except Exception:
+        return response_text
+
+
+
 if __name__ == "__main__":
 
     user_filters = []
@@ -177,14 +251,14 @@ if __name__ == "__main__":
 
     # Store dynamic keys globally for use in LLM extraction
     import builtins
-    builtins.filter_keys = [item['key'] for item in filter_key_values if item['key']]
 
-    # Use the LLM-suggested query for Tavily search
+    builtins.filter_keys = [item['key'] for item in filter_key_values if item['key']]
+    builtins.filter_keys.insert(0, 'Company Name')  
+
+    print(builtins.filter_keys)
+
+    # # Use the LLM-suggested query for Tavily search
     result = search_query_with_tavily(suggested_query)
-
-    # Store dynamic keys globally for use in LLM extraction
-    import builtins
-    builtins.filter_keys = [item['key'] for item in filter_key_values if item['key']]
 
     # Build Tavily query from user filters (or from key-value pairs if needed)
     query = "list of companies that " + ", ".join(f for f in user_filters)
@@ -192,14 +266,23 @@ if __name__ == "__main__":
 
     # print("\nAnswer:", result["answer"])
     print("\nSources:")
+    urls = []
     for i, src in enumerate(result["sources"], start=1):
         print(f"{i}. {src['title']} - {src['url']}")
-        print(f"   {src['content']}\n")
+        urls.append(src['url'])
+        # print(f"   {src['content']}\n")
 
     # Usage after Tavily result
-    company_info = extract_company_info_with_llm(result)
-    print(company_info)
+    # company_info = extract_company_info_with_llm(result)
+    # print(company_info)   
 
+    for url in urls:
+        html = fetch_page(url)
+        text = clean_text(html)
+
+        json_output = extract_json(text, builtins.filter_keys)
+        print(f"output for url {url} is: \n", json_output)
+  
 """
     {
         Company Name:

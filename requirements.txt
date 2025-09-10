@@ -1,0 +1,7 @@
+huggingface_hub
+requests
+tavily-python
+beautifulsoup4
+python-dotenv
+huggingface_hub
+selenium
