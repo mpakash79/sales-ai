@@ -6,7 +6,11 @@ import requests
 from huggingface_hub import InferenceClient
 # we import the internal get_session used by huggingface_hub
 import huggingface_hub.inference._client as _hf_inference_client
-# ---------------------------------------------------
+from dotenv import load_dotenv
+import builtins
+
+load_dotenv('env')
+
 
 def _safe_chat_completion(client: InferenceClient, model: str, messages, retries: int = 1):
     """
@@ -37,8 +41,8 @@ def get_filter_key_names_llm(user_filters):
     """
     client = InferenceClient(
         provider="together",
-        api_key=os.environ["HF_TOKEN"],
-    )    
+        api_key=os.getenv('HF_TOKEN'),
+    )
     prompt = (
         "For each of the following user-entered filters, identify the most meaningful key name (e.g., Funding, Employee size, Category, Revenue, Location, Funded By, etc.) and its value. "
         "Return a JSON object with two fields: 'filters' (a JSON array of objects with 'key' and 'value'), and 'query' (a single string that would be an efficient search query for a web search engine to find companies matching all the filters). "
@@ -69,7 +73,7 @@ def get_filter_key_names_llm(user_filters):
 def extract_company_info_with_llm(tavily_result):
     client = InferenceClient(
         provider="together",
-        api_key=os.environ["HF_TOKEN"],
+        api_key=os.getenv('HF_TOKEN'),
     )
     # concatenate sources
     sources_text = ""
@@ -81,7 +85,6 @@ def extract_company_info_with_llm(tavily_result):
             sources_text += (content + "\n\n") 
 
     # dynamic keys
-    import builtins
     filter_keys = getattr(builtins, 'filter_keys', None)
     # Always include 'Company Name' in the output keys
     if not filter_keys:
@@ -139,7 +142,7 @@ def search_query_with_tavily(query: str):
     Returns:
         dict: A dictionary with 'answer' and 'sources' keys.
     """
-    api_key = os.getenv("TAVILY_API_KEY")
+    api_key = os.getenv('TAVILY_API_KEY')
     if not api_key:
         raise EnvironmentError("TAVILY_API_KEY environment variable not set.")
 
@@ -199,6 +202,11 @@ if __name__ == "__main__":
     # Usage after Tavily result
     company_info = extract_company_info_with_llm(result)
     print(company_info)
+    # Save to JSON
+    OUTPUT_FILE = "companies.json"
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(company_info, f, ensure_ascii=False, indent=4)
+    print(f"[+] Saved {len(company_info)} companies to {OUTPUT_FILE}")
 
 """
     {
