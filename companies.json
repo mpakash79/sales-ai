@@ -1,37 +1,115 @@
 [
     {
-        "Company Name": "Anysphere",
+        "name": "Anysphere",
         "Funding": "",
         "Employee size": "15"
     },
     {
-        "Company Name": "Sakana AI",
+        "name": "Sakana AI",
         "Funding": "$244 million",
         "Employee size": ""
     },
     {
-        "Company Name": "Recogni",
+        "name": "Recogni",
         "Funding": "$102 million",
         "Employee size": ""
     },
     {
-        "Company Name": "Nimble Robotics",
+        "name": "Nimble Robotics",
         "Funding": "$106 million",
         "Employee size": ""
     },
     {
-        "Company Name": "Wistia",
+        "name": "Wistia",
         "Funding": "",
         "Employee size": "80"
     },
     {
-        "Company Name": "Datto",
+        "name": "Datto",
         "Funding": "",
         "Employee size": ""
     },
     {
-        "Company Name": "InsideSales.com",
+        "name": "InsideSales.com",
         "Funding": "$250 million+",
         "Employee size": "570"
+    },
+    {
+        "name": "ConvertKit",
+        "industry": "Email Marketing, B2B SaaS",
+        "funding_type": "Bootstrapped (no recent funding disclosed for September 2025)",
+        "funding_amount_usd": "N/A",
+        "employees": 82,
+        "annual_revenue_usd": 25000000,
+        "description": "Email marketing platform for creators, scaled to $25M/year revenue with 82 employees."
+    },
+    {
+        "name": "Filestage",
+        "industry": "Content Review & Approval, B2B SaaS",
+        "funding_type": "N/A",
+        "funding_amount_usd": "N/A",
+        "employees": 50,
+        "annual_revenue_usd": 3000000,
+        "description": "Content review and approval SaaS with over 600 customers and 50,000 users worldwide."
+    },
+    {
+        "name": "FundThrough",
+        "industry": "FinTech, Finance, B2B Software",
+        "fundingType": "Series B",
+        "fundingAmount": "$25,000,000"
+    },
+    {
+        "name": "W\u2022SENSE",
+        "industry": "B2B Software",
+        "fundingType": "Series B",
+        "fundingAmount": "$8,153,568"
+    },
+    {
+        "name": "Redpanda Data",
+        "industry": "Data, B2B Software",
+        "fundingType": "Series D",
+        "fundingAmount": "$100,000,000"
+    },
+    {
+        "name": "groundcover",
+        "industry": "Cloud Computing, B2B Software",
+        "fundingType": "Series B",
+        "fundingAmount": "$35,000,000"
+    },
+    {
+        "name": "Quantexa",
+        "industry": "Data, Analytics, B2B Software",
+        "fundingType": "Series F",
+        "fundingAmount": "$175,000,000"
+    },
+    {
+        "name": "Qizhen Mall",
+        "industry": "E-commerce, Marketplace, B2B Software, Artificial Intelligence",
+        "fundingType": "Series A",
+        "fundingAmount": "$11,057,054"
+    },
+    {
+        "name": "SmartSuite",
+        "industry": "Data, B2B Software",
+        "fundingType": "Series A",
+        "fundingAmount": "$13,000,000"
+    },
+    {
+        "name": "Omnitron Sensors",
+        "industry": "B2B Software",
+        "fundingType": "Series A",
+        "fundingAmount": "$13,000,000"
+    },
+    {
+        "name": "Anchor",
+        "industry": "Cloud Computing, B2B Software",
+        "fundingType": "Series A",
+        "fundingAmount": "$20,000,000"
+    },
+    {
+        "name": "The Helper Bees",
+        "industry": "Insurance, B2B Software",
+        "fundingType": "Series C",
+        "fundingAmount": "$35,000,000"
     }
 ]
