@@ -10,6 +10,9 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import time
+import threading
+import math
+from serpapi import GoogleSearch
 
 load_dotenv()
 
@@ -23,15 +26,11 @@ def _safe_chat_completion(client: InferenceClient, model: str, messages, retries
     except requests.exceptions.ContentDecodingError as e:
         if retries <= 0:
             raise
-        # Get the session object used internally by huggingface_hub and disable gzip decoding by requesting identity
         try:
             session = _hf_inference_client.get_session()
-            # force future responses to be uncompressed
             session.headers.update({"Accept-Encoding": "identity"})
         except Exception:
-            # If we cannot access internal session, re-raise original error
             raise
-        # retry once
         return _safe_chat_completion(client, model, messages, retries=retries - 1)
 
 def get_filter_key_names_llm(user_filters):
@@ -45,10 +44,11 @@ def get_filter_key_names_llm(user_filters):
     )    
     prompt = (
         "For each of the following user-entered filters, identify the most meaningful key name (e.g., Funding, Employee size, Category, Revenue, Location, Funded By, etc.) and its value. "
-        "Return a JSON object with two fields: 'filters' (a JSON array of objects with 'key' and 'value'), and 'query' (a single string that would be an efficient search query for a web search engine to find companies matching all the filters). "
+        "Return a JSON object with two fields: 'filters' (a JSON array of objects with 'key' and 'value'), and 'query' (a single meaningful string that would be an efficient search query for a web search engine to find companies matching all the filters). "
         "Filters: " + ", ".join(user_filters) + "\n"
         "Example: {\"filters\": [{\"key\": \"Funding\", \"value\": \"1M\"}, {\"key\": \"Employee size\", \"value\": \"less than 50\"}], \"query\": \"B2B SaaS companies funded 1M with less than 50 employees\"} "
         "Return only the JSON object."
+
     )
 
     messages = [{"role": "user", "content": prompt}]
@@ -61,7 +61,6 @@ def get_filter_key_names_llm(user_filters):
         query = result.get('query', "")
         return filters, query
     except Exception:
-        # fallback to previous behavior if not a valid object
         match = re.search(r'\[.*\]', response_text, re.DOTALL)
         if match:
             return json.loads(match.group(0)), ""
@@ -72,19 +71,16 @@ def extract_company_info_with_llm(tavily_result):
         provider="together",
         api_key=os.environ["HF_TOKEN"],
     )
-    # concatenate sources
     sources_text = ""
     relevant_sources = [src for src in tavily_result.get('sources', [])]
     if relevant_sources:
         for src in relevant_sources:
-            # be cautious about extremely long content — truncate for safety
             content = src.get('content', '')
             sources_text += (content + "\n\n") 
 
-    # dynamic keys
     import builtins
     filter_keys = getattr(builtins, 'filter_keys', None)
-    # Always include 'Company Name' in the output keys
+
     if not filter_keys:
         filter_keys = ['Company Name', 'Category', 'Funding Type', 'Funding', 'Employee size']
     elif 'Company Name' not in filter_keys:
@@ -111,7 +107,6 @@ def extract_company_info_with_llm(tavily_result):
             try:
                 result_json = json.loads(match.group(0))
             except Exception:
-                # Try to fix incomplete JSON (e.g., missing closing bracket)
                 fixed = match.group(0)
                 if not fixed.endswith(']'):
                     fixed += ']'
@@ -141,9 +136,9 @@ def search_query_with_tavily(query: str):
 
     client = TavilyClient(api_key=api_key)
     response = client.search(query, include_answer=True,
-                             search_depth="advanced",  # or "deep"
-                             include_raw_content=True,  # optional: fetch full-page content
-                             llm_options={"max_tokens": 800})  # try increasing answer size)
+                             search_depth="advanced",  
+                             include_raw_content=True,  
+                             llm_options={"max_tokens": 4000})  # try increasing answer size)
 
     answer = response.get("answer", "No answer found.")
     sources = [
@@ -158,7 +153,9 @@ def clean_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
+
     return soup.get_text(" ", strip=True)
+
 
 def fetch_page(url: str) -> str:
     headers = {
@@ -184,7 +181,7 @@ def fetch_page(url: str) -> str:
 
 def fetch_with_selenium(url: str) -> str:
     options = Options()
-    options.add_argument("--headless=new")   # run in headless mode
+    options.add_argument("--headless=new") 
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -194,15 +191,11 @@ def fetch_with_selenium(url: str) -> str:
 
     driver = webdriver.Chrome(options=options)
     driver.get(url)
-
-    # wait for JS to load
     time.sleep(3)
 
     html = driver.page_source
     driver.quit()
     return html
-
-
 
 def extract_json(text: str, keys: list[str]) -> dict:
     client = InferenceClient(
@@ -213,14 +206,14 @@ def extract_json(text: str, keys: list[str]) -> dict:
         f"Extract structured information about companies from the following text. "
         f"The text may contain tables. Parse tables and extract company details matching these keys: {keys}. "
         f"Return only a JSON array of objects, one per company, with keys: {keys}. Do not include any explanation, commentary, or extra text. Return only the JSON array.\n\n"
-        f"Text: {text[:4000]}"
+        f"Text: {text}"
     )
     messages = [
         {"role": "user", "content": prompt}
     ]
     completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
     response_text = completion.choices[0].message.content
-    # Try to extract JSON from response
+
     try:
         match = re.search(r'\{.*\}|\[.*\]', response_text, re.DOTALL)
         if match:
@@ -229,7 +222,50 @@ def extract_json(text: str, keys: list[str]) -> dict:
     except Exception:
         return response_text
 
+def search_searchapi(query: str, api_key: str, engine: str = "google", location: str = None, gl: str = None, hl: str = None):
+    """
+    Query SearchAPI.io with basic parameters.
+    
+    Args:
+        query: the search query (string)
+        api_key: your SearchAPI.io API key
+        engine: which engine (e.g., "google", "google_light", "youtube", etc.)
+        location: optional: location parameter (city/country etc)
+        gl: country code for geolocation (e.g. "uk", "us", etc.)
+        hl: language code (e.g. "en", "en-gb", etc.)
+    Returns:
+        JSON result (as dictionary) if successful, else raises error or returns None
+    """
+    url = "https://www.searchapi.io/api/v1/search"
+    params = {
+        "q": query,
+        "engine": engine,
+        "api_key": api_key,
+    }
 
+    if location:
+        params["location"] = location
+    if gl:
+        params["gl"] = gl
+    if hl:
+        params["hl"] = hl
+
+    resp = requests.get(url, params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def search_google(query: str):
+    params = {
+        "q": query,                 
+        "hl": "en",                 
+        "gl": "us",                 
+        "api_key": os.getenv("SERP_API_KEY")  
+    }
+
+    search = GoogleSearch(params)
+    results = search.get_dict()
+    return results
 
 if __name__ == "__main__":
 
@@ -241,7 +277,6 @@ if __name__ == "__main__":
             break
         user_filters.append(filter_input)
 
-    # Get meaningful key names for each filter using LLM
     filter_key_values, suggested_query = get_filter_key_names_llm(user_filters)
     print("\nDetected filter keys and values:")
     for item in filter_key_values:
@@ -249,7 +284,6 @@ if __name__ == "__main__":
 
     print(f"\nSuggested Tavily query: {suggested_query}")
 
-    # Store dynamic keys globally for use in LLM extraction
     import builtins
 
     builtins.filter_keys = [item['key'] for item in filter_key_values if item['key']]
@@ -257,39 +291,111 @@ if __name__ == "__main__":
 
     print(builtins.filter_keys)
 
-    # # Use the LLM-suggested query for Tavily search
     result = search_query_with_tavily(suggested_query)
 
-    # Build Tavily query from user filters (or from key-value pairs if needed)
-    query = "list of companies that " + ", ".join(f for f in user_filters)
-    result = search_query_with_tavily(query)
+    # query = "list of companies that " + ", ".join(f for f in user_filters)
+    # result = search_query_with_tavily(query)
 
-    # print("\nAnswer:", result["answer"])
     print("\nSources:")
     urls = []
     for i, src in enumerate(result["sources"], start=1):
         print(f"{i}. {src['title']} - {src['url']}")
         urls.append(src['url'])
-        # print(f"   {src['content']}\n")
+        print(f"   {src['content']}\n")
+
+    print("\nPerforming Google search with query:", suggested_query)
+    result = search_searchapi(suggested_query, os.getenv("SEARCH_API_KEY"), engine="google", hl="en")
+    
+    if "organic_results" in result:
+        for i, item in enumerate(result["organic_results"], start=1):
+            print(f"{i}. {item.get('title')}")
+            print(item.get('link'))
+            print(item.get('snippet', ""))  
+            print()
+    else:
+        print("No organic_results in response: ", result)
+
+    data = search_google(suggested_query)
+    print("performing serp search:....")
+    print(data)
+
+    if "organic_results" in data:
+        for idx, result in enumerate(data["organic_results"], start=1):
+            print(f"{idx}. {result.get('title')}")
+            print(result.get("link"))
+            print()
+    else:
+        print("No results found or API quota exceeded.")
 
     # Usage after Tavily result
     # company_info = extract_company_info_with_llm(result)
     # print(company_info)   
 
-    for url in urls:
-        html = fetch_page(url)
-        text = clean_text(html)
+    # for url in urls:
+    #     html = fetch_page(url)
+    #     text = clean_text(html)
 
-        json_output = extract_json(text, builtins.filter_keys)
-        print(f"output for url {url} is: \n", json_output)
-  
-"""
-    {
-        Company Name:
-        Category:
-        Funding Type:
-        Funding:
-        Employee size: -1 (default)
-    }
+    #     # Chunk text into overlapping 4000-char sections with 200-char overlap
+    #     max_len = 2500
+    #     overlap = 200
+    #     text_str = text if isinstance(text, str) else '\n'.join([h + '\n' + t for h, t in text])
+    #     sections = []
+    #     start = 0
+    #     while start < len(text_str):
+    #         end = min(start + max_len, len(text_str))
+    #         section = text_str[start:end]
+    #         sections.append(section)
+    #         if end == len(text_str):
+    #             break
+    #         start = end - overlap
 
-"""
+    #     results = [None] * len(sections)
+    #     threads = []
+
+    #     def run_extract(idx, section):
+    #         results[idx] = extract_json(section, builtins.filter_keys)
+
+    #     for idx, section in enumerate(sections):
+    #         t = threading.Thread(target=run_extract, args=(idx, section))
+    #         t.start()
+    #         threads.append(t)
+    #     for t in threads:
+    #         t.join()
+
+    #     # Flatten and collect all company dicts
+    #     all_companies = []
+    #     for out in results:
+    #         if isinstance(out, list):
+    #             all_companies.extend(out)
+    #         elif isinstance(out, dict):
+    #             all_companies.append(out)
+
+    #     # Deduplicate/merge using LLM
+    #     if all_companies:
+    #         client = InferenceClient(
+    #             provider="together",
+    #             api_key=os.environ["HF_TOKEN"],
+    #         )
+    #         prompt = (
+    #             f"Given the following extracted company info (may contain duplicates or partials), "
+    #             f"deduplicate and merge them into a single clean JSON array. "
+    #             f"If two objects refer to the same company, merge their fields. "
+    #             f"Return only the JSON array.\n\n"
+    #             f"Data: {json.dumps(all_companies, ensure_ascii=False)}"
+    #         )
+    #         messages = [
+    #             {"role": "user", "content": prompt}
+    #         ]
+    #         completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
+    #         response_text = completion.choices[0].message.content
+    #         try:
+    #             match = re.search(r'\[.*?\]', response_text, re.DOTALL)
+    #             if match:
+    #                 deduped = json.loads(match.group(0))
+    #             else:
+    #                 deduped = all_companies
+    #         except Exception:
+    #             deduped = all_companies
+    #         print(f"output for url {url} is: \n", json.dumps(deduped, indent=2, ensure_ascii=False))
+    #     else:
+    #         print(f"output for url {url} is: \n", all_companies)
