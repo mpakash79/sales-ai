@@ -90,6 +90,7 @@ def extract_company_info_with_llm(tavily_result):
         messages = [{"role": "user", "content": msg}]
         completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
         response_text = completion.choices[0].message.content
+        print("LLM response text:\n", response_text)
         # Try to extract JSON from code block or plain string
         code_match = re.search(r'```json\s*([\s\S]+?)\s*```', response_text)
         if code_match:
