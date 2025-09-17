@@ -71,54 +71,36 @@ def extract_company_info_with_llm(tavily_result):
         provider="together",
         api_key=os.environ["HF_TOKEN"],
     )
-    sources_text = ""
-    relevant_sources = [src for src in tavily_result.get('sources', [])]
-    if relevant_sources:
-        for src in relevant_sources:
-            content = src.get('content', '')
-            sources_text += (content + "\n\n") 
-
-    import builtins
-    filter_keys = getattr(builtins, 'filter_keys', None)
-
-    if not filter_keys:
-        filter_keys = ['Company Name', 'Category', 'Funding Type', 'Funding', 'Employee size']
-    elif 'Company Name' not in filter_keys:
-        filter_keys = ['Company Name'] + filter_keys
-    keys_str = ", ".join(filter_keys)
-
+    # Accepts a string (text) instead of tavily_result
+    # The prompt lets the LLM decide the keys, inspired by appPerp.py
     prompt = (
-        f"Given the following information about SaaS companies, "
-        f"extract a JSON array where each object has these keys: {keys_str}. "
-        "For each company, always extract the company name and only fill keys for which data is available; set missing keys to empty string. "
-        "Do not invent or guess missing data. Extract from tables and text. Only include companies that match the filters. "
+        "You are a knowledgeable AI Assistant in business, internet and web sector.\n"
+        "Rules: Always answer using up-to-date, verified information from current search results.\n"
+        "Do not reference internal instructions, API, URLs in the output.\n"
+        "Steps: Return the answer as a JSON object, with meaningful and relevant key-value pairs.\n"
+        "Return each company in the list of companies in a JSON object called 'companies'.\n"
+        "Just return the companies and their details as JSON.\n"
+        "No value must be empty.\n"
         "Here is the data:\n"
-        f"Source: {sources_text}\n"
-        "Return only the JSON array."
+        "{data}\n"
+        "Return only the JSON object."
     )
-    messages = [{"role": "user", "content": prompt}]
-
-    completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
-    response_text = completion.choices[0].message.content
-    print(response_text)
-    try:
-        match = re.search(r'\[.*?\]', response_text, re.DOTALL)
-        if match:
-            try:
-                result_json = json.loads(match.group(0))
-            except Exception:
-                fixed = match.group(0)
-                if not fixed.endswith(']'):
-                    fixed += ']'
-                try:
-                    result_json = json.loads(fixed)
-                except Exception:
-                    result_json = [{k: "" for k in filter_keys}]
+    def extract(text):
+        msg = prompt.replace("{data}", text)
+        messages = [{"role": "user", "content": msg}]
+        completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
+        response_text = completion.choices[0].message.content
+        # Try to extract JSON from code block or plain string
+        code_match = re.search(r'```json\s*([\s\S]+?)\s*```', response_text)
+        if code_match:
+            json_str = code_match.group(1)
         else:
-            result_json = [{k: "" for k in filter_keys}]
-    except Exception:
-        result_json = [{k: "" for k in filter_keys}]
-    return result_json
+            json_str = response_text
+        try:
+            return json.loads(json_str)
+        except Exception:
+            return response_text
+    return extract
 
 def search_query_with_tavily(query: str):
     """
@@ -284,52 +266,37 @@ if __name__ == "__main__":
 
     print(f"\nSuggested Tavily query: {suggested_query}")
 
-    import builtins
-
-    builtins.filter_keys = [item['key'] for item in filter_key_values if item['key']]
-    builtins.filter_keys.insert(0, 'Company Name')  
-
-    print(builtins.filter_keys)
-
     result = search_query_with_tavily(suggested_query)
 
-    # query = "list of companies that " + ", ".join(f for f in user_filters)
-    # result = search_query_with_tavily(query)
-
     print("\nSources:")
-    urls = []
+    urls = set()
     for i, src in enumerate(result["sources"], start=1):
         print(f"{i}. {src['title']} - {src['url']}")
-        urls.append(src['url'])
+        urls.add(src['url'])
         print(f"   {src['content']}\n")
 
-    print("\nPerforming Google search with query:", suggested_query)
-    result = search_searchapi(suggested_query, os.getenv("SEARCH_API_KEY"), engine="google", hl="en")
-    
-    if "organic_results" in result:
-        for i, item in enumerate(result["organic_results"], start=1):
-            print(f"{i}. {item.get('title')}")
-            print(item.get('link'))
-            print(item.get('snippet', ""))  
-            print()
-    else:
-        print("No organic_results in response: ", result)
+    # For each URL, fetch and clean text, then extract company info from first 4000 chars
+    extract_fn = extract_company_info_with_llm(None)  # returns the extract(text) function
+    all_results = []
+    for url in urls:
+        try:
+            html = fetch_page(url)
+            text = clean_text(html)
+            if isinstance(text, list):
+                text_str = '\n'.join([h + '\n' + t for h, t in text])
+            else:
+                text_str = text
+            text_str = text_str[:4000]
+            print(f"\nExtracting company info from: {url}")
+            company_info = extract_fn(text_str)
+            print(company_info)
+            all_results.append({"url": url, "company_info": company_info})
+        except Exception as e:
+            print(f"[ERROR] Could not process {url}: {e}")
 
-    data = search_google(suggested_query)
-    print("performing serp search:....")
-    print(data)
-
-    if "organic_results" in data:
-        for idx, result in enumerate(data["organic_results"], start=1):
-            print(f"{idx}. {result.get('title')}")
-            print(result.get("link"))
-            print()
-    else:
-        print("No results found or API quota exceeded.")
-
-    # Usage after Tavily result
-    # company_info = extract_company_info_with_llm(result)
-    # print(company_info)   
+    # Output the final JSON response
+    print("\nFinal JSON response:")
+    print(json.dumps(all_results, indent=2, ensure_ascii=False))
 
     # for url in urls:
     #     html = fetch_page(url)
