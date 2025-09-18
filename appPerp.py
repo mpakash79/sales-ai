@@ -38,7 +38,7 @@ def perplexity_chat(api_key: str, model: str, user_prompt: str, temperature: flo
     resp.raise_for_status()
     return resp.json()
 
-def load_seen_companies(filepath="seen_companies.json"):
+def load_seen_companies(filepath="companies.json"):
     if os.path.exists(filepath):
         with open(filepath, "r") as f:
             try:
@@ -47,7 +47,7 @@ def load_seen_companies(filepath="seen_companies.json"):
                 return []
     return []
 
-def save_seen_companies(companies, filepath="seen_companies.json"):
+def save_seen_companies(companies, filepath="companies.json"):
     with open(filepath, "w") as f:
         json.dump(companies, f, indent=4)
 
@@ -109,7 +109,7 @@ if __name__ == "__main__":
         # Save updated data
         save_seen_companies(updated_companies)
 
-        print(f"\nSaved {len(new_companies)} new companies to seen_companies.json (Total now: {len(updated_companies)})")
+        print(f"\nSaved {len(new_companies)} new companies to companies.json (Total now: {len(updated_companies)})")
 
     except Exception as e:
         print("\n[ERROR] Could not parse companies JSON:", e)

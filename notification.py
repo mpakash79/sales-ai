@@ -21,7 +21,6 @@ from app import (
 load_dotenv(dotenv_path='env')
 
 
-# Constants
 SEEN_FILE = 'companies.json'
 SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 465
