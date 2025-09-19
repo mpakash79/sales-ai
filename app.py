@@ -14,7 +14,7 @@ import threading
 import math
 from serpapi import GoogleSearch
 
-load_dotenv('env')
+load_dotenv('.env')
 
 
 def _safe_chat_completion(client: InferenceClient, model: str, messages, retries: int = 1):
@@ -90,21 +90,56 @@ def extract_company_info_with_llm(tavily_result):
     )
 
     def extract(text):
+        # Insert the text into the prompt
         msg = prompt.replace("{data}", text)
-        messages = [{"role": "user", "content": msg}]
+
+        # Strong system-level instruction to avoid tool-calls, chain-of-thought, or any non-JSON output
+        system_msg = (
+            "You are a JSON-only extractor.\n"
+            "Strict rules: Return ONLY a single valid JSON object (or array) and nothing else.\n"
+            "Do NOT include any explanations, commentary, tool calls, agent tokens, or internal thoughts.\n"
+            "If you can't find company data, return {\"companies\": []}.\n"
+        )
+
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": msg}
+        ]
+
         completion = _safe_chat_completion(client, model="openai/gpt-oss-20b", messages=messages)
         response_text = completion.choices[0].message.content
-        print("LLM response text:\n", response_text)
-        # Try to extract JSON from code block or plain string
-        code_match = re.search(r'```json\s*([\s\S]+?)\s*```', response_text)
-        if code_match:
-            json_str = code_match.group(1)
-        else:
-            json_str = response_text
-        try:
-            return json.loads(json_str)
-        except Exception:
-            return response_text
+        print("LLM raw response text:\n", response_text)
+
+        # Try to extract the first JSON object/array from the response (most robust)
+        match = re.search(r'(\{[\s\S]*?\}|\[[\s\S]*?\])', response_text)
+        if match:
+            json_str = match.group(1)
+            try:
+                return json.loads(json_str)
+            except Exception:
+                # try replacing single quotes with double quotes as a fallback
+                try:
+                    return json.loads(json_str.replace("'", '"'))
+                except Exception:
+                    pass
+
+        # If no JSON found, attempt to remove common agent/tool tokens and retry
+        cleaned = re.sub(r'<\|[^>]+\|>', '', response_text)
+        # remove lines that look like 'assistant<|channel|>commentary to=...'
+        cleaned = re.sub(r"^[^\{\[]+", '', cleaned, flags=re.DOTALL)
+        match = re.search(r'(\{[\s\S]*?\}|\[[\s\S]*?\])', cleaned)
+        if match:
+            json_str = match.group(1)
+            try:
+                return json.loads(json_str)
+            except Exception:
+                try:
+                    return json.loads(json_str.replace("'", '"'))
+                except Exception:
+                    pass
+
+        # As a last resort, return the raw text so the caller can inspect it
+        return {"raw_response": response_text}
 
     return extract
 
@@ -303,7 +338,45 @@ def tavily_query(filter_key_values, suggested_query):
             print(f"\nExtracting company info from: {url}")
             company_info = extract_fn(text_str)
             print(company_info)
-            all_results.append({"url": url, "company_info": company_info})
+            # Normalize company_info to a list of company dicts
+            def _normalize_company_info(ci):
+                # If it's already a list, assume list of companies
+                if isinstance(ci, list):
+                    return ci
+                # If it's a dict with 'companies' key, return that list
+                if isinstance(ci, dict):
+                    if 'companies' in ci and isinstance(ci['companies'], list):
+                        return ci['companies']
+                    # If the LLM returned a raw_response containing json text, try to parse
+                    if 'raw_response' in ci and isinstance(ci['raw_response'], str):
+                        try:
+                            parsed = json.loads(ci['raw_response'])
+                            if isinstance(parsed, list):
+                                return parsed
+                            if isinstance(parsed, dict) and 'companies' in parsed and isinstance(parsed['companies'], list):
+                                return parsed['companies']
+                        except Exception:
+                            return []
+                    # If the dict itself looks like a single company (has a 'name' key), wrap it
+                    if any(k in ci for k in ('name', 'company_name', 'Company')):
+                        return [ci]
+                # If it's a string, try to parse JSON from it
+                if isinstance(ci, str):
+                    try:
+                        parsed = json.loads(ci)
+                        if isinstance(parsed, list):
+                            return parsed
+                        if isinstance(parsed, dict) and 'companies' in parsed and isinstance(parsed['companies'], list):
+                            return parsed['companies']
+                    except Exception:
+                        return []
+                return []
+
+            companies = _normalize_company_info(company_info)
+            if companies:
+                all_results.extend(companies)
+            else:
+                print(f"[WARN] No company objects extracted from {url}")
         except Exception as e:
             print(f"[ERROR] Could not process {url}: {e}")
 
