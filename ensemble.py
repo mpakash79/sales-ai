@@ -6,10 +6,35 @@ from app import tavily_query
 
 user_filters=get_user_filters()
 filter_key_values, suggested_query = get_filter_key_names_llm(user_filters)
-openperplex_json_str=asyncio.run(run_streaming_search(filter_key_values, suggested_query))
-tavily_list=tavily_query(filter_key_values, suggested_query)
+openperplex_json_str = asyncio.run(run_streaming_search(filter_key_values, suggested_query))
+# tavily_query may return a JSON string or a Python list
+tavily_list = tavily_query(filter_key_values, suggested_query)
 
-openperplex_list = json.loads(openperplex_json_str)
+# Normalize openperplex result into a Python list
+openperplex_list = []
+if isinstance(openperplex_json_str, str):
+	try:
+		openperplex_list = json.loads(openperplex_json_str)
+	except Exception:
+		# if parsing fails, leave as empty list
+		openperplex_list = []
+elif isinstance(openperplex_json_str, list):
+	openperplex_list = openperplex_json_str
+elif isinstance(openperplex_json_str, dict):
+	# if it's a dict with 'companies' key
+	openperplex_list = openperplex_json_str.get('companies', []) if 'companies' in openperplex_json_str else [openperplex_json_str]
+else:
+	openperplex_list = []
+
+# Normalize tavily_list into a Python list as well (it may already be a list)
+if isinstance(tavily_list, str):
+	try:
+		tavily_list = json.loads(tavily_list)
+	except Exception:
+		tavily_list = []
+elif tavily_list is None:
+	tavily_list = []
+
 merged_list = tavily_list + openperplex_list  # simple merge, duplicates not removed
 
 
@@ -43,7 +68,7 @@ def enrich_companies_with_person_info(merged_list, roles=["CEO", "CTO"], extra_r
 		query = f"{' and '.join(roles)} of {name}"
 		results = search_google(query)
 		# Gather top 3 snippets
-		snippets = " ".join([res.get("snippet", "") for res in results.get("organic_results", [])[:3]])
+		snippets = " ".join([res.get("snippet", "") for res in results.get("organic_results", [])])
 		# Prompt LLM for all roles at once, ask for JSON output
 		prompt = (
 			f"You are a business information assistant.\n"

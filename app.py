@@ -383,7 +383,7 @@ def tavily_query(filter_key_values, suggested_query):
     # Output the final JSON response
     print("\nFinal JSON response:")
     print(json.dumps(all_results, indent=2, ensure_ascii=False))
-    return (json.dumps(all_results, indent=2, ensure_ascii=False))
+    return all_results
     companies = []
 
     # # Check if 'companies' exists in the JSON
